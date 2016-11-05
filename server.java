@@ -7,8 +7,8 @@ import java.util.concurrent.*;
 class Server 
 {
 	ArrayList<Socket> clientArray;
-	ConcurrentLinkedQueue<String> msgQueue;
-	Selector selector;
+	ConcurrentLinkedQueue<String> msgQueue; //Thread-safe Queue
+	Selector selector; //For asynchronoous I/O
 	public static void main(String args[])throws IOException
 	{
 		Server serve = new Server();
@@ -17,17 +17,10 @@ class Server
 
 	public Server()throws IOException
 	{
-		//this.listen();
 		clientArray=new ArrayList<Socket>();
 		msgQueue= new ConcurrentLinkedQueue<String>();
 		selector = Selector.open();
 		Thread t1 = new Thread(){
-			public void run()
-			{
-				listen();
-			}
-		};
-		Thread t2 = new Thread(){
 			public void run()
 			{
 				try{
@@ -36,7 +29,7 @@ class Server
 				catch(Exception e){}
 			}
 		};
-		Thread t3 = new Thread(){
+		Thread t2 = new Thread(){
 			public void run()
 			{
 				try
@@ -46,53 +39,26 @@ class Server
 				catch(Exception e){}
 			}
 		};
-		//t1.start();
+		/**
+		*We use 2 threads here. One for broadcasting the messages
+		*The other to accept connections and read data from the client sockets
+		*/
+		t1.start(); 
 		t2.start();
-		t3.start();
 	}
-	public void listen()
-	{
-		try
-		{
-			ServerSocketChannel ssc = ServerSocketChannel.open();
-			ServerSocket sock = ssc.socket();
-     		InetSocketAddress isa = new InetSocketAddress(5555);
-      		sock.bind(isa);
-			while(true)
-			{
-				Socket client = sock.accept();
-				System.out.println(client);
-				synchronized(clientArray)
-				{
-					clientArray.add(client);
-				}
-				SocketChannel sc = client.getChannel();
-				System.out.println(sc);
-				sc.configureBlocking(false);
-				selector.wakeup();
-				sc.register(selector,SelectionKey.OP_READ);
-				System.out.println("New client: "+client.getRemoteSocketAddress().toString());
-			}
-		}
-		catch(Exception e)
-		{
-			e.printStackTrace();
-		}
-	}
-
 	public void receiveMessages()
 	{
-		System.out.println("Server receiving messages now");
+		System.out.println("Server started");
 		ServerSocketChannel ssc;
 		ServerSocket sock=null;
 		try
 		{
 			ssc = ServerSocketChannel.open();
-			ssc.configureBlocking(false);
+			ssc.configureBlocking(false); //Asynchronous I/O
 			sock = ssc.socket();
      		InetSocketAddress isa = new InetSocketAddress(5555);
       		sock.bind(isa);
-      		ssc.register(selector,SelectionKey.OP_ACCEPT);
+      		ssc.register(selector,SelectionKey.OP_ACCEPT); //Register the socket channel with the selector to accept connections
 		}
 		catch(Exception e)
 		{
@@ -102,7 +68,7 @@ class Server
 		{
 			try
 			{
-				int num=selector.select();
+				int num=selector.select(); //Select a key from the registered socket channels
 				if(num==0)
 					continue;
 				Set keys = selector.selectedKeys();
@@ -113,21 +79,16 @@ class Server
 					if((key.readyOps() & SelectionKey.OP_ACCEPT) == SelectionKey.OP_ACCEPT)
 					{
 						Socket client = sock.accept();
-						//System.out.println(client);
 						synchronized(clientArray)
 						{
-							clientArray.add(client);
+							clientArray.add(client); //Add the client to an array list so that 
+													 //broadcast function can make use of it while 
+													 //sending data on this socket
+
 						}
 						SocketChannel sc = client.getChannel();
-						ByteBuffer buff = ByteBuffer.allocate(1024);
-						String message="Hello there\n";
-						byte[] bytebuff=message.getBytes("UTF-8");
-						buff.put(bytebuff);
-						buff.flip();
-						sc.write(buff);
-						//System.out.println(sc);
 						sc.configureBlocking(false);
-						sc.register(selector,SelectionKey.OP_READ);
+						sc.register(selector,SelectionKey.OP_READ); //Register this socket channel to read data from the socket
 						System.out.println("New client: "+client.getRemoteSocketAddress().toString());
 						System.out.println("Client Array size is "+clientArray);
 					}
@@ -141,23 +102,18 @@ class Server
 							Socket client=sc.socket();
 							ByteBuffer buff = ByteBuffer.allocate(1024);
 							int status=sc.read(buff);
-							//System.out.println(status);
-							if(status==-1)
+							if(status==-1) //If status is -1, it means the connection has been terminated on the remote end
 							{
 								synchronized(clientArray)
 								{
-									clientArray.remove(client);
+									clientArray.remove(client); //Safely remove the client from the array list
 								}
 								sc.close();
 								System.out.println("Client array size is "+clientArray.size());
 								continue;
 							}
-							//buff.flip();
 							String message=new String(buff.array(),java.nio.charset.StandardCharsets.UTF_8);
 							msgQueue.add(message);
-							//System.out.println("Queue size is "+msgQueue.size());
-							//broadcast(client.getRemoteSocketAddress().toString(),message);
-
 						}
 						catch(IOException e)
 						{
@@ -189,12 +145,10 @@ class Server
 		System.out.println("Broadcast started");
 		while(true)
 		{
-			//System.out.println("Iterating");
 			String message=null;
 			if(!msgQueue.isEmpty())
 			{
-				message=msgQueue.poll();
-				//System.out.println("Retrieved message from the queue is "+message);
+				message=msgQueue.poll(); //Retrieve the next message remaining in the queue
 			}
 			if(clientArray.size()!=0)
 			{
@@ -204,25 +158,18 @@ class Server
 					{
 						try
 						{
-							// BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(sock.getOutputStream()));
-							// bw.write("Hello");
 							SocketChannel sc = sock.getChannel();
 							ByteBuffer buff = ByteBuffer.allocate(1024);
-							//System.out.println(message);
 							if(message!=null)
 							{
 								byte[] byteBuff=message.getBytes("UTF-8");
 								buff.clear();
 								buff.put(byteBuff);
 								buff.flip();
-								//System.out.println("Writing");
 								sc.write(buff);
-								//System.out.println("Wrote");
-								//System.out.println(sock);
 							}
 						}
 						catch(IOException e){}
-						//sock.send(message);
 					}
 				}
 			}
