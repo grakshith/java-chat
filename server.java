@@ -62,7 +62,10 @@ class Server
 			{
 				Socket client = sock.accept();
 				System.out.println(client);
-				clientArray.add(client);
+				synchronized(clientArray)
+				{
+					clientArray.add(client);
+				}
 				SocketChannel sc = client.getChannel();
 				System.out.println(sc);
 				sc.configureBlocking(false);
@@ -97,7 +100,6 @@ class Server
 		}
 		while(true)
 		{
-			System.out.println("Pass 1");
 			try
 			{
 				int num=selector.select();
@@ -111,19 +113,23 @@ class Server
 					if((key.readyOps() & SelectionKey.OP_ACCEPT) == SelectionKey.OP_ACCEPT)
 					{
 						Socket client = sock.accept();
-						System.out.println(client);
-						clientArray.add(client);
+						//System.out.println(client);
+						synchronized(clientArray)
+						{
+							clientArray.add(client);
+						}
 						SocketChannel sc = client.getChannel();
 						ByteBuffer buff = ByteBuffer.allocate(1024);
-						String message="Hello there";
+						String message="Hello there\n";
 						byte[] bytebuff=message.getBytes("UTF-8");
 						buff.put(bytebuff);
 						buff.flip();
 						sc.write(buff);
-						System.out.println(sc);
+						//System.out.println(sc);
 						sc.configureBlocking(false);
 						sc.register(selector,SelectionKey.OP_READ);
 						System.out.println("New client: "+client.getRemoteSocketAddress().toString());
+						System.out.println("Client Array size is "+clientArray);
 					}
 					if((key.readyOps() & SelectionKey.OP_READ) == SelectionKey.OP_READ)
 					{
@@ -135,19 +141,21 @@ class Server
 							Socket client=sc.socket();
 							ByteBuffer buff = ByteBuffer.allocate(1024);
 							int status=sc.read(buff);
-							System.out.println(status);
-							if(status==0 || status==-1)
+							//System.out.println(status);
+							if(status==-1)
 							{
-								clientArray.remove(client);
+								synchronized(clientArray)
+								{
+									clientArray.remove(client);
+								}
 								sc.close();
+								System.out.println("Client array size is "+clientArray.size());
+								continue;
 							}
 							//buff.flip();
 							String message=new String(buff.array(),java.nio.charset.StandardCharsets.UTF_8);
-							System.out.println("Reading now");
-							System.out.println(message);
 							msgQueue.add(message);
-							System.out.println("Message added to queue");
-							System.out.println(msgQueue.peek());
+							//System.out.println("Queue size is "+msgQueue.size());
 							//broadcast(client.getRemoteSocketAddress().toString(),message);
 
 						}
@@ -182,32 +190,41 @@ class Server
 		while(true)
 		{
 			//System.out.println("Iterating");
-			for(Socket sock : clientArray)
+			String message=null;
+			if(!msgQueue.isEmpty())
 			{
-				try
+				message=msgQueue.poll();
+				//System.out.println("Retrieved message from the queue is "+message);
+			}
+			if(clientArray.size()!=0)
+			{
+				synchronized(clientArray)
 				{
-					// BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(sock.getOutputStream()));
-					// bw.write("Hello");
-					SocketChannel sc = sock.getChannel();
-					ByteBuffer buff = ByteBuffer.allocate(1024);
-					String message=null;
-					message=msgQueue.poll();
-					//System.out.println(message);
-					if(message!="null")
+					for(Socket sock : clientArray)
 					{
-						System.out.println(message);
-						byte[] byteBuff=message.getBytes("UTF-8");
-						buff.clear();
-						buff.put(byteBuff);
-						buff.flip();
-						System.out.println("Writing");
-						sc.write(buff);
-						System.out.println("Wrote");
-						System.out.println(sock);
+						try
+						{
+							// BufferedWriter bw = new BufferedWriter(new OutputStreamWriter(sock.getOutputStream()));
+							// bw.write("Hello");
+							SocketChannel sc = sock.getChannel();
+							ByteBuffer buff = ByteBuffer.allocate(1024);
+							//System.out.println(message);
+							if(message!=null)
+							{
+								byte[] byteBuff=message.getBytes("UTF-8");
+								buff.clear();
+								buff.put(byteBuff);
+								buff.flip();
+								//System.out.println("Writing");
+								sc.write(buff);
+								//System.out.println("Wrote");
+								//System.out.println(sock);
+							}
+						}
+						catch(IOException e){}
+						//sock.send(message);
 					}
 				}
-				catch(IOException e){}
-				//sock.send(message);
 			}
 		}
 	}
